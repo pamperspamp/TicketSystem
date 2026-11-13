@@ -11,9 +11,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Sql)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Sql PrintSupport)
 
 set(PROJECT_SOURCES
+        third_party/qrcodegen/qrcodegen.cpp
+        ticketservice.cpp ticketservice.h
         main.cpp
         mainwindow.cpp
         mainwindow.h
@@ -49,7 +51,7 @@ endif()
 target_sources(course PRIVATE )
 target_compile_definitions(course PRIVATE COURSE_DATABASE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tickets.db")
 
-target_link_libraries(course PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Sql)
+target_link_libraries(course PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Sql Qt${QT_VERSION_MAJOR}::PrintSupport)
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an

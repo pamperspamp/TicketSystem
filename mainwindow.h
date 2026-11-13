@@ -1,11 +1,16 @@
 #pragma once
 
 #include "database.h"
+#include "ticketservice.h"
 #include <QMainWindow>
 
 class QEvent;
+class QDateEdit;
+class QComboBox;
+class QCheckBox;
 class QGridLayout;
 class QLabel;
+class QPushButton;
 class QTabWidget;
 
 QT_BEGIN_NAMESPACE
@@ -29,10 +34,24 @@ private slots:
     void onSeatClicked(const Seat &seat);
     void onAddEventClicked();
     void onEditEventClicked();
+    void onCheckInClicked();
 
 private:
     void setupTabs();
+    void updateSelection();
+    void completeSelection(bool sale);
+    QMap<int,int> selectedPrices;
+    QLabel *selectionLabel = nullptr;
+    QPushButton *sellSelection = nullptr;
+    QPushButton *reserveSelection = nullptr;
+    void showTicketFile(const QString &code);
+    void showReport();
+    TicketService ticketService;
     void refreshEvents();
+    QDateEdit *scheduleDate = nullptr;
+    QCheckBox *allDates = nullptr;
+    QComboBox *scheduleFilter = nullptr;
+    QLabel *emptySchedule = nullptr;
     void renderHallSeats(int eventId);
     bool showEventDialog(Event &eventData, bool isEdit);
 
@@ -41,6 +60,7 @@ private:
 
     QTabWidget *tabs = nullptr;
     QLabel *hallHeaderLabel = nullptr;
+    QLabel *statsLabel = nullptr;
     QLabel *screenLabel = nullptr;
     QGridLayout *seatsGrid = nullptr;
 

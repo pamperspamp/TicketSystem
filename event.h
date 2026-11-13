@@ -5,6 +5,8 @@
 struct Event
 {
     int id = 0;
+    int durationMinutes = 120;
+    bool finished = false;
     QString kind;
     QString title;
     QString date;
