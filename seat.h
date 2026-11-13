@@ -1,19 +1,21 @@
 #pragma once
 
-// Три можливі стани кожного крісла на конкретну подію
+#include <QString>
+
 enum class SeatStatus
 {
-    Free,      // Вільне (зелене)
-    Reserved,  // Заброньоване (жовте)
-    Sold       // Продане (червоне)
+    Free,      // Вільне
+    Reserved,  // Заброньоване
+    Sold       // Продане
 };
 
-// Структура, яка описує одне місце в залі
 struct Seat
 {
-    int id = 0;           // Унікальний ID місця з таблиці seats
-    int hallId = 0;       // До якої зали належить
-    int rowNumber = 0;    // Номер ряду (1, 2, 3...)
-    int seatNumber = 0;   // Номер місця в ряду (1, 2, 3...)
-    SeatStatus status = SeatStatus::Free; // Поточний стан
+    int id = 0;
+    int hallId = 0;
+    int rowNumber = 0;
+    int seatNumber = 0;
+    SeatStatus status = SeatStatus::Free;
+    int ticketId = 0;
+    QString reservationName;
 };

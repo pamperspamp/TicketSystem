@@ -22,6 +22,7 @@ public:
 private slots:
     void openEventHall(int row, int column);
     void onTabChanged(int index);
+    void onSeatClicked(const Seat &seat);
 
 private:
     void setupTabs();
@@ -33,6 +34,11 @@ private:
 
     QTabWidget *tabs = nullptr;
     QLabel *hallHeaderLabel = nullptr;
+    QLabel *screenLabel = nullptr;
     QGridLayout *seatsGrid = nullptr;
+
     int currentEventId = 0;
+    int currentRegularPriceKopiyky = 0;
+    int currentVipPriceKopiyky = 0;
+    int currentMaxRow = 0;
 };
