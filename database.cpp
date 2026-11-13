@@ -50,10 +50,74 @@ bool Database::open(QString &error)
             return false;
         }
     }
+
+    if (!seedIfEmpty(query, error)) {
+        connection.rollback();
+        return false;
+    }
+
     if (!connection.commit()) {
         error = connection.lastError().text();
         connection.rollback();
         return false;
     }
     return true;
+}
+
+bool Database::seedIfEmpty(QSqlQuery &query, QString &error)
+{
+    if (!query.exec("SELECT COUNT(*) FROM events")) {
+        error = query.lastError().text();
+        return false;
+    }
+    if (query.next() && query.value(0).toInt() > 0)
+        return true;
+
+    const QStringList seedQueries = {
+        R"(INSERT OR IGNORE INTO halls (id, name) VALUES
+            (1, 'Велика'), (2, 'Камерна'), (3, 'Кінозала'))",
+        R"(INSERT INTO events (id, title, kind, starts_at, hall_id, price_kopiyky) VALUES
+            (1, 'Лісова пісня', 'Вистава', '2026-11-20T18:00:00', 1, 25000),
+            (2, 'Джазовий вечір', 'Концерт', '2026-11-21T19:30:00', 2, 32000),
+            (3, 'Вечір кіно', 'Кіно', '2026-11-22T17:00:00', 3, 18000))"
+    };
+
+    for (const QString &sql : seedQueries) {
+        if (!query.exec(sql)) {
+            error = query.lastError().text();
+            return false;
+        }
+    }
+    return true;
+}
+
+QVector<Event> Database::loadEvents(QString *error) const
+{
+    QVector<Event> result;
+    QSqlQuery query(connection);
+    const QString sql = R"(
+        SELECT e.id, e.title, e.kind, e.starts_at, e.hall_id, h.name, e.price_kopiyky
+        FROM events e
+        JOIN halls h ON h.id = e.hall_id
+        ORDER BY e.starts_at ASC, e.id ASC
+    )";
+
+    if (!query.exec(sql)) {
+        if (error)
+            *error = query.lastError().text();
+        return result;
+    }
+
+    while (query.next()) {
+        Event ev;
+        ev.id = query.value(0).toInt();
+        ev.title = query.value(1).toString();
+        ev.kind = query.value(2).toString();
+        ev.startsAt = QDateTime::fromString(query.value(3).toString(), Qt::ISODate);
+        ev.hallId = query.value(4).toInt();
+        ev.hallName = query.value(5).toString();
+        ev.priceKopiyky = query.value(6).toInt();
+        result.push_back(ev);
+    }
+    return result;
 }

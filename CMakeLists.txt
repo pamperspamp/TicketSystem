@@ -25,6 +25,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
         database.h database.cpp
+        event.h
     )
 # Define target properties for Android with Qt 6 as:
 #    set_property(TARGET course APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
@@ -44,7 +45,7 @@ else()
     endif()
 endif()
 
-target_sources(course PRIVATE tickets.db)
+target_sources(course PRIVATE )
 target_compile_definitions(course PRIVATE COURSE_DATABASE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tickets.db")
 
 target_link_libraries(course PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Sql)
