@@ -1,10 +1,12 @@
 #include "database.h"
 
+#include <QDateTime>
+#include <QRandomGenerator>
 #include <QSqlError>
 #include <QSqlQuery>
 
 // ============================================================================
-// 1. ВІДКРИТТЯ БАЗИ ДАНИХ ТА СТВОРЕННЯ ТАБЛИЦЬ
+// 1. ВІДКРИТТЯ БАЗИ ДАНИХ (ОДНА ПОСТІЙНА БД БЕЗ ПЕРЕСТВОРЕННЯ ТАБЛИЦЬ)
 // ============================================================================
 bool Database::open(QString &error)
 {
@@ -25,21 +27,6 @@ bool Database::open(QString &error)
     if (!connection.transaction()) {
         error = connection.lastError().text();
         return false;
-    }
-
-    // Автоматичне оновлення структури БД, якщо залишилася стара таблиця events без vip_price_kopiyky
-    if (query.exec("PRAGMA table_info(events)")) {
-        bool hasVipPrice = false;
-        bool hasAnyColumns = false;
-        while (query.next()) {
-            hasAnyColumns = true;
-            if (query.value(1).toString() == QLatin1String("vip_price_kopiyky"))
-                hasVipPrice = true;
-        }
-        if (hasAnyColumns && !hasVipPrice) {
-            query.exec("DROP TABLE IF EXISTS tickets");
-            query.exec("DROP TABLE IF EXISTS events");
-        }
     }
 
     const QStringList schema = {
@@ -101,19 +88,19 @@ bool Database::open(QString &error)
 }
 
 // ============================================================================
-// 2. ПОЧАТКОВЕ НАПОВНЕННЯ БАЗИ (ВЕЛИКІ ЗАЛИ 100+ ГЛЯДАЧІВ ТА VIP-ЦІНИ)
+// 2. ПОЧАТКОВЕ НАПОВНЕННЯ БАЗИ (Спрацьовує лише раз на порожній БД)
 // ============================================================================
 bool Database::seedIfEmpty(QSqlQuery &query, QString &error)
 {
-    if (!query.exec("SELECT COUNT(*) FROM events")) {
+    if (!query.exec("SELECT COUNT(*) FROM halls")) {
         error = query.lastError().text();
         return false;
     }
-    const int eventsCount = query.next() ? query.value(0).toInt() : 0;
+    const int hallsCount = query.next() ? query.value(0).toInt() : 0;
 
-    if (eventsCount == 0) {
+    if (hallsCount == 0) {
         const QStringList seedQueries = {
-            R"(INSERT OR IGNORE INTO halls (id, name) VALUES
+            R"(INSERT INTO halls (id, name) VALUES
                 (1, 'Велика'), (2, 'Камерна'), (3, 'Кінозала'))",
             R"(INSERT INTO events (id, kind, title, event_date, event_time, hall_id, price_kopiyky, vip_price_kopiyky) VALUES
                 (1, 'Вистава', 'Лісова пісня', '20.11.2026', '18:00', 1, 25000, 40000),
@@ -136,10 +123,6 @@ bool Database::seedIfEmpty(QSqlQuery &query, QString &error)
     const int seatsCount = query.next() ? query.value(0).toInt() : 0;
 
     if (seatsCount == 0) {
-        // Три великі зали різної конфігурації (усі > 100 глядачів):
-        // 1. Велика зала: 10 рядів по 18 місць = 180 глядачів
-        // 2. Камерна зала: 8 рядів по 14 місць = 112 глядачів
-        // 3. Кінозала: 12 рядів (1-й ряд: 18 місць, 2-11 ряди: по 20 місць, 12-й ряд дивани: 14 місць) = 232 глядачі
         struct HallConfig { int hallId; int rows; int cols; };
         const HallConfig configs[] = {
             {1, 10, 18},
@@ -177,7 +160,91 @@ bool Database::seedIfEmpty(QSqlQuery &query, QString &error)
 }
 
 // ============================================================================
-// 3. ДОПОМІЖНІ ЗАПИТИ ДЛЯ ПОДІЇ (ТИП ТА ЦІНИ)
+// 3. АДМІНІСТРУВАННЯ ПОДІЙ (СПИСОК ЗАЛІВ, СТВОРЕННЯ ТА РЕДАГУВАННЯ ІВЕНТІВ)
+// ============================================================================
+QVector<QPair<int, QString>> Database::loadHalls(QString *error) const
+{
+    QVector<QPair<int, QString>> halls;
+    QSqlQuery query(connection);
+
+    if (!query.exec("SELECT id, name FROM halls ORDER BY id ASC")) {
+        if (error)
+            *error = query.lastError().text();
+        return halls;
+    }
+
+    while (query.next()) {
+        halls.push_back({query.value(0).toInt(), query.value(1).toString()});
+    }
+    return halls;
+}
+
+bool Database::hasActiveTicketsForEvent(int eventId) const
+{
+    QSqlQuery query(connection);
+    query.prepare("SELECT COUNT(*) FROM tickets WHERE event_id = ? AND status IN ('reserved', 'sold')");
+    query.addBindValue(eventId);
+
+    if (query.exec() && query.next()) {
+        return query.value(0).toInt() > 0;
+    }
+    return false;
+}
+
+bool Database::addEvent(const Event &ev, QString &error)
+{
+    QSqlQuery query(connection);
+    query.prepare(R"(
+        INSERT INTO events (kind, title, event_date, event_time, hall_id, price_kopiyky, vip_price_kopiyky)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    )");
+    query.addBindValue(ev.kind.trimmed());
+    query.addBindValue(ev.title.trimmed());
+    query.addBindValue(ev.date.trimmed());
+    query.addBindValue(ev.time.trimmed());
+    query.addBindValue(ev.hallId);
+    query.addBindValue(ev.priceKopiyky);
+    query.addBindValue(ev.vipPriceKopiyky);
+
+    if (!query.exec()) {
+        error = QStringLiteral("Не вдалося додати подію: ") + query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+bool Database::updateEvent(const Event &ev, QString &error)
+{
+    QSqlQuery query(connection);
+    query.prepare(R"(
+        UPDATE events
+        SET kind = ?,
+            title = ?,
+            event_date = ?,
+            event_time = ?,
+            hall_id = ?,
+            price_kopiyky = ?,
+            vip_price_kopiyky = ?
+        WHERE id = ?
+    )");
+    query.addBindValue(ev.kind.trimmed());
+    query.addBindValue(ev.title.trimmed());
+    query.addBindValue(ev.date.trimmed());
+    query.addBindValue(ev.time.trimmed());
+    query.addBindValue(ev.hallId);
+    query.addBindValue(ev.priceKopiyky);
+    query.addBindValue(ev.vipPriceKopiyky);
+    query.addBindValue(ev.id);
+
+    if (!query.exec()) {
+        error = QStringLiteral("Не вдалося оновити подію: ") + query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+// ============================================================================
+// 4. ДОПОМІЖНІ ЗАПИТИ ДЛЯ ПОДІЇ (ТИП ТА ЦІНИ)
 // ============================================================================
 QString Database::getEventKind(int eventId) const
 {
@@ -206,7 +273,7 @@ bool Database::getEventPrices(int eventId, int &regularPriceKopiyky, int &vipPri
 }
 
 // ============================================================================
-// 4. ЗАВАНТАЖЕННЯ АФІШІ ПОДІЙ
+// 5. ЗАВАНТАЖЕННЯ АФІШІ ПОДІЙ
 // ============================================================================
 QVector<Event> Database::loadEvents(QString *error) const
 {
@@ -243,7 +310,7 @@ QVector<Event> Database::loadEvents(QString *error) const
 }
 
 // ============================================================================
-// 5. ЗАВАНТАЖЕННЯ МІСЦЬ ДЛЯ ПОДІЇ
+// 6. ЗАВАНТАЖЕННЯ МІСЦЬ ДЛЯ ПОДІЇ (ВКЛЮЧАЮЧИ ДАНІ ПРОДАНОГО КВИТКА)
 // ============================================================================
 QVector<Seat> Database::loadSeatsForEvent(int eventId, QString *error) const
 {
@@ -251,7 +318,8 @@ QVector<Seat> Database::loadSeatsForEvent(int eventId, QString *error) const
     QSqlQuery query(connection);
 
     const QString sql = R"(
-        SELECT s.id, s.hall_id, s.row_number, s.seat_number, t.status, t.id, t.reservation_name
+        SELECT s.id, s.hall_id, s.row_number, s.seat_number,
+               t.status, t.id, t.reservation_name, t.code, t.paid_kopiyky, t.sold_at
         FROM seats s
         JOIN events e ON e.hall_id = s.hall_id
         LEFT JOIN tickets t ON t.seat_id = s.id
@@ -286,6 +354,9 @@ QVector<Seat> Database::loadSeatsForEvent(int eventId, QString *error) const
 
         seat.ticketId = query.value(5).toInt();
         seat.reservationName = query.value(6).toString();
+        seat.ticketCode = query.value(7).toString();
+        seat.paidKopiyky = query.value(8).toInt();
+        seat.soldAt = query.value(9).toString();
 
         result.push_back(seat);
     }
@@ -293,7 +364,7 @@ QVector<Seat> Database::loadSeatsForEvent(int eventId, QString *error) const
 }
 
 // ============================================================================
-// 6. ОФОРМЛЕННЯ БРОНЮВАННЯ
+// 7. ОФОРМЛЕННЯ БРОНЮВАННЯ ТА СКАСУВАННЯ БРОНІ (ЕТАП 4)
 // ============================================================================
 bool Database::reserveSeat(int eventId, int seatId, const QString &customerName, QString &error)
 {
@@ -313,9 +384,6 @@ bool Database::reserveSeat(int eventId, int seatId, const QString &customerName,
     return true;
 }
 
-// ============================================================================
-// 7. СКАСУВАННЯ БРОНІ
-// ============================================================================
 bool Database::cancelReservation(int ticketId, QString &error)
 {
     QSqlQuery query(connection);
@@ -332,6 +400,71 @@ bool Database::cancelReservation(int ticketId, QString &error)
     }
     if (query.numRowsAffected() == 0) {
         error = QStringLiteral("Бронь уже скасована або квиток уже викуплений.");
+        return false;
+    }
+    return true;
+}
+
+// ============================================================================
+// 8. ГЕНЕРАЦІЯ УНІКАЛЬНОГО КОДУ КВИТКА ТА ПРОДАЖ (ЕТАП 5)
+// ============================================================================
+QString Database::generateTicketCode(int prefixId, int secondaryId) const
+{
+    const quint32 randPart = QRandomGenerator::global()->bounded(0x1000, 0xFFFF);
+    return QStringLiteral("TKT-%1-%2-%3")
+        .arg(prefixId)
+        .arg(secondaryId)
+        .arg(QString::number(randPart, 16).toUpper());
+}
+
+bool Database::sellDirectSeat(int eventId, int seatId, int priceKopiyky, QString &generatedCode, QString &error)
+{
+    generatedCode = generateTicketCode(eventId, seatId);
+    const QString soldAt = QDateTime::currentDateTime().toString(QStringLiteral("dd.MM.yyyy HH:mm:ss"));
+
+    QSqlQuery query(connection);
+    query.prepare(R"(
+        INSERT INTO tickets (event_id, seat_id, status, code, paid_kopiyky, sold_at)
+        VALUES (?, ?, 'sold', ?, ?, ?)
+    )");
+    query.addBindValue(eventId);
+    query.addBindValue(seatId);
+    query.addBindValue(generatedCode);
+    query.addBindValue(priceKopiyky);
+    query.addBindValue(soldAt);
+
+    if (!query.exec()) {
+        error = QStringLiteral("Не вдалося продати квиток: ") + query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+bool Database::sellReservedTicket(int ticketId, int priceKopiyky, QString &generatedCode, QString &error)
+{
+    generatedCode = generateTicketCode(ticketId, QRandomGenerator::global()->bounded(10, 99));
+    const QString soldAt = QDateTime::currentDateTime().toString(QStringLiteral("dd.MM.yyyy HH:mm:ss"));
+
+    QSqlQuery query(connection);
+    query.prepare(R"(
+        UPDATE tickets
+        SET status = 'sold',
+            code = ?,
+            paid_kopiyky = ?,
+            sold_at = ?
+        WHERE id = ? AND status = 'reserved'
+    )");
+    query.addBindValue(generatedCode);
+    query.addBindValue(priceKopiyky);
+    query.addBindValue(soldAt);
+    query.addBindValue(ticketId);
+
+    if (!query.exec()) {
+        error = QStringLiteral("Помилка при викупі броні: ") + query.lastError().text();
+        return false;
+    }
+    if (query.numRowsAffected() == 0) {
+        error = QStringLiteral("Не вдалося викупити квиток: бронь уже скасована або викуплена.");
         return false;
     }
     return true;

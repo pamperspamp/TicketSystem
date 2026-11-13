@@ -11,6 +11,6 @@ struct Event
     QString time;
     int hallId = 0;
     QString hallName;
-    int priceKopiyky = 0;    // Звичайна ціна в копійках
-    int vipPriceKopiyky = 0; // Ціна VIP-місць (останній ряд) у копійках
+    int priceKopiyky = 0;    // Звичайна ціна квитка в копійках
+    int vipPriceKopiyky = 0; // Окрема ціна для VIP-місць (останній ряд) у копійках
 };

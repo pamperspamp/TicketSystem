@@ -3,6 +3,7 @@
 #include "database.h"
 #include <QMainWindow>
 
+class QEvent;
 class QGridLayout;
 class QLabel;
 class QTabWidget;
@@ -19,15 +20,21 @@ public:
     explicit MainWindow(Database &db, QWidget *parent = nullptr);
     ~MainWindow();
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private slots:
     void openEventHall(int row, int column);
     void onTabChanged(int index);
     void onSeatClicked(const Seat &seat);
+    void onAddEventClicked();
+    void onEditEventClicked();
 
 private:
     void setupTabs();
     void refreshEvents();
     void renderHallSeats(int eventId);
+    bool showEventDialog(Event &eventData, bool isEdit);
 
     Ui::MainWindow *ui;
     Database &database;

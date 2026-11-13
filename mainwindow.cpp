@@ -1,18 +1,26 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMap>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QTabWidget>
 #include <QTableWidgetItem>
+#include <QTimer>
 #include <QVBoxLayout>
 
 MainWindow::MainWindow(Database &db, QWidget *parent)
@@ -31,11 +39,43 @@ MainWindow::~MainWindow()
 }
 
 // ============================================================================
-// НАЛАШТУВАННЯ ВКЛАДОК ТА МАКЕТУ ЗАЛИ З ВІДСТУПАМИ
+// НАЛАШТУВАННЯ ВКЛАДОК, ПАНЕЛІ АДМІНІСТРАТОРА ТА ПОВЕДІНКИ ТАБЛИЦІ
 // ============================================================================
 void MainWindow::setupTabs()
 {
-    QWidget *afishaPage = takeCentralWidget();
+    QWidget *designerPage = takeCentralWidget();
+
+    // Перша вкладка — Афіша подій + панель адміністратора
+    auto *afishaPage = new QWidget(this);
+    auto *afishaLayout = new QVBoxLayout(afishaPage);
+    afishaLayout->setContentsMargins(16, 16, 16, 16);
+    afishaLayout->setSpacing(12);
+
+    auto *adminBar = new QHBoxLayout();
+    auto *adminTitle = new QLabel(QStringLiteral("Афіша подій (подвійний клік — відкрити схему зали)"), afishaPage);
+    adminTitle->setStyleSheet(QStringLiteral("font-size: 14px; font-weight: bold; color: #cfd3dc;"));
+
+    auto *addEventBtn = new QPushButton(QStringLiteral("+ Нова подія"), afishaPage);
+    addEventBtn->setCursor(Qt::PointingHandCursor);
+    addEventBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { padding: 7px 14px; background: #1f8b4c; color: #ffffff; font-weight: bold; border-radius: 6px; }"
+        "QPushButton:hover { background: #26a65b; }"
+        ));
+
+    auto *editEventBtn = new QPushButton(QStringLiteral("✎ Редагувати подію"), afishaPage);
+    editEventBtn->setCursor(Qt::PointingHandCursor);
+    editEventBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { padding: 7px 14px; background: #2d313c; color: #ffffff; border: 1px solid #4a5060; border-radius: 6px; }"
+        "QPushButton:hover { background: #3a3f4d; }"
+        ));
+
+    adminBar->addWidget(adminTitle);
+    adminBar->addStretch();
+    adminBar->addWidget(addEventBtn);
+    adminBar->addWidget(editEventBtn);
+
+    afishaLayout->addLayout(adminBar);
+    afishaLayout->addWidget(designerPage);
 
     tabs = new QTabWidget(this);
     tabs->setStyleSheet(QStringLiteral(
@@ -52,7 +92,6 @@ void MainWindow::setupTabs()
     hallLayout->setContentsMargins(24, 20, 24, 24);
     hallLayout->setSpacing(16);
 
-    // Верхня панель із кнопкою повернення та заголовком події
     auto *topBar = new QHBoxLayout();
     auto *backBtn = new QPushButton(QStringLiteral("← Назад до афіші"), hallPage);
     backBtn->setCursor(Qt::PointingHandCursor);
@@ -70,7 +109,6 @@ void MainWindow::setupTabs()
     topBar->addStretch();
     hallLayout->addLayout(topBar);
 
-    // Прокрутка для великих залів (100+ місць)
     auto *scrollArea = new QScrollArea(hallPage);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
@@ -81,7 +119,6 @@ void MainWindow::setupTabs()
     centerLayout->setContentsMargins(20, 12, 20, 28);
     centerLayout->setSpacing(24);
 
-    // Плашка "ЕКРАН" або "СЦЕНА"
     screenLabel = new QLabel(QStringLiteral("ЕКРАН / СЦЕНА"), scrollContent);
     screenLabel->setAlignment(Qt::AlignCenter);
     screenLabel->setMinimumHeight(36);
@@ -92,7 +129,6 @@ void MainWindow::setupTabs()
         ));
     centerLayout->addWidget(screenLabel, 0, Qt::AlignCenter);
 
-    // Сітка крісел
     auto *seatsWrapper = new QWidget(scrollContent);
     seatsGrid = new QGridLayout(seatsWrapper);
     seatsGrid->setHorizontalSpacing(6);
@@ -105,14 +141,63 @@ void MainWindow::setupTabs()
     tabs->addTab(hallPage, QStringLiteral("2. Схема зали"));
     setCentralWidget(tabs);
 
+    // Налаштування таблиці афіші
     ui->events->setEditTriggers(QAbstractItemView::NoEditTriggers);
     ui->events->setSelectionBehavior(QAbstractItemView::SelectRows);
     ui->events->setSelectionMode(QAbstractItemView::SingleSelection);
     ui->events->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
 
+    ui->events->setFocusPolicy(Qt::NoFocus);
+    ui->events->setStyleSheet(QStringLiteral(
+        "QTableWidget { outline: 0; }"
+        "QTableWidget::item:focus { border: none; outline: none; }"
+        "QTableWidget::item:selected { background-color: #3a3f4d; color: #f0c674; }"
+        ));
+
+    ui->events->viewport()->installEventFilter(this);
+    afishaPage->installEventFilter(this);
+
+    auto *clearSelectionTimer = new QTimer(this);
+    clearSelectionTimer->setSingleShot(true);
+    clearSelectionTimer->setInterval(4000);
+
+    connect(ui->events, &QTableWidget::itemSelectionChanged, this, [this, clearSelectionTimer]() {
+        if (!ui->events->selectedItems().isEmpty()) {
+            clearSelectionTimer->start();
+        }
+    });
+    connect(clearSelectionTimer, &QTimer::timeout, this, [this]() {
+        ui->events->clearSelection();
+        ui->events->setCurrentCell(-1, -1);
+    });
+
     connect(ui->events, &QTableWidget::cellDoubleClicked, this, &MainWindow::openEventHall);
     connect(backBtn, &QPushButton::clicked, this, [this]() { tabs->setCurrentIndex(0); });
     connect(tabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
+    connect(addEventBtn, &QPushButton::clicked, this, &MainWindow::onAddEventClicked);
+    connect(editEventBtn, &QPushButton::clicked, this, &MainWindow::onEditEventClicked);
+}
+
+// ============================================================================
+// ЗНЯТТЯ ВИДІЛЕННЯ ПРИ КЛІКУ В ПОРОЖНЄ МІСЦЕ ТАБЛИЦІ АБО ВІКНА
+// ============================================================================
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+
+        if (watched == ui->events->viewport()) {
+            if (!ui->events->itemAt(mouseEvent->pos())) {
+                ui->events->clearSelection();
+                ui->events->setCurrentCell(-1, -1);
+            }
+        } else if (watched != ui->events) {
+            ui->events->clearSelection();
+            ui->events->setCurrentCell(-1, -1);
+        }
+    }
+
+    return QMainWindow::eventFilter(watched, event);
 }
 
 // ============================================================================
@@ -160,6 +245,158 @@ void MainWindow::refreshEvents()
     }
 }
 
+// ============================================================================
+// ДІАЛОГ АДМІНІСТРАТОРА: СТВОРЕННЯ ТА РЕДАГУВАННЯ ПОДІЙ
+// ============================================================================
+bool MainWindow::showEventDialog(Event &eventData, bool isEdit)
+{
+    QString error;
+    const auto halls = database.loadHalls(&error);
+    if (!error.isEmpty() || halls.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Помилка"), QStringLiteral("Не вдалося завантажити список залів."));
+        return false;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(isEdit ? QStringLiteral("Редагування події") : QStringLiteral("Створення нової події"));
+    dialog.setMinimumWidth(400);
+
+    auto *form = new QFormLayout(&dialog);
+    form->setSpacing(12);
+
+    auto *kindCombo = new QComboBox(&dialog);
+    kindCombo->addItems({QStringLiteral("Вистава"), QStringLiteral("Концерт"), QStringLiteral("Кіно")});
+    if (isEdit) {
+        const int idx = kindCombo->findText(eventData.kind);
+        if (idx >= 0) kindCombo->setCurrentIndex(idx);
+    }
+
+    auto *titleEdit = new QLineEdit(eventData.title, &dialog);
+    titleEdit->setPlaceholderText(QStringLiteral("Наприклад: Гамлет"));
+
+    auto *dateEdit = new QLineEdit(isEdit ? eventData.date : QStringLiteral("25.11.2026"), &dialog);
+    dateEdit->setPlaceholderText(QStringLiteral("ДД.ММ.РРРР"));
+
+    auto *timeEdit = new QLineEdit(isEdit ? eventData.time : QStringLiteral("19:00"), &dialog);
+    timeEdit->setPlaceholderText(QStringLiteral("ГГ:ХХ"));
+
+    auto *hallCombo = new QComboBox(&dialog);
+    for (const auto &h : halls) {
+        hallCombo->addItem(h.second, h.first);
+    }
+    if (isEdit) {
+        const int hallIdx = hallCombo->findData(eventData.hallId);
+        if (hallIdx >= 0) hallCombo->setCurrentIndex(hallIdx);
+
+        if (database.hasActiveTicketsForEvent(eventData.id)) {
+            hallCombo->setEnabled(false);
+            hallCombo->setToolTip(QStringLiteral("Не можна змінити залу, бо на подію вже є заброньовані або продані квитки"));
+        }
+    }
+
+    auto *regPriceSpin = new QDoubleSpinBox(&dialog);
+    regPriceSpin->setRange(0.0, 50000.0);
+    regPriceSpin->setDecimals(2);
+    regPriceSpin->setSuffix(QStringLiteral(" грн"));
+    regPriceSpin->setValue(isEdit ? (eventData.priceKopiyky / 100.0) : 250.0);
+
+    auto *vipPriceSpin = new QDoubleSpinBox(&dialog);
+    vipPriceSpin->setRange(0.0, 50000.0);
+    vipPriceSpin->setDecimals(2);
+    vipPriceSpin->setSuffix(QStringLiteral(" грн"));
+    vipPriceSpin->setValue(isEdit ? (eventData.vipPriceKopiyky / 100.0) : 400.0);
+
+    form->addRow(QStringLiteral("Тип події:"), kindCombo);
+    form->addRow(QStringLiteral("Назва:"), titleEdit);
+    form->addRow(QStringLiteral("Дата:"), dateEdit);
+    form->addRow(QStringLiteral("Час:"), timeEdit);
+    form->addRow(QStringLiteral("Зала:"), hallCombo);
+    form->addRow(QStringLiteral("Звичайна ціна:"), regPriceSpin);
+    form->addRow(QStringLiteral("VIP ціна:"), vipPriceSpin);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Зберегти"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("Скасувати"));
+    form->addRow(buttons);
+
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&]() {
+        if (titleEdit->text().trimmed().isEmpty() ||
+            dateEdit->text().trimmed().isEmpty() ||
+            timeEdit->text().trimmed().isEmpty()) {
+            QMessageBox::warning(&dialog, QStringLiteral("Увага"), QStringLiteral("Заповніть назву, дату та час події."));
+            return;
+        }
+        dialog.accept();
+    });
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted)
+        return false;
+
+    eventData.kind = kindCombo->currentText();
+    eventData.title = titleEdit->text().trimmed();
+    eventData.date = dateEdit->text().trimmed();
+    eventData.time = timeEdit->text().trimmed();
+    eventData.hallId = hallCombo->currentData().toInt();
+    eventData.priceKopiyky = qRound(regPriceSpin->value() * 100.0);
+    eventData.vipPriceKopiyky = qRound(vipPriceSpin->value() * 100.0);
+    return true;
+}
+
+void MainWindow::onAddEventClicked()
+{
+    Event newEvent;
+    if (!showEventDialog(newEvent, false))
+        return;
+
+    QString error;
+    if (!database.addEvent(newEvent, error)) {
+        QMessageBox::warning(this, QStringLiteral("Помилка"), error);
+        return;
+    }
+
+    refreshEvents();
+}
+
+void MainWindow::onEditEventClicked()
+{
+    const int row = ui->events->currentRow();
+    if (row < 0) {
+        QMessageBox::information(this, QStringLiteral("Вибір події"), QStringLiteral("Спочатку виділіть подію в таблиці."));
+        return;
+    }
+
+    const int eventId = ui->events->item(row, 0)->data(Qt::UserRole).toInt();
+
+    QString error;
+    const QVector<Event> events = database.loadEvents(&error);
+    Event targetEvent;
+    bool found = false;
+    for (const Event &ev : events) {
+        if (ev.id == eventId) {
+            targetEvent = ev;
+            found = true;
+            break;
+        }
+    }
+
+    if (!found)
+        return;
+
+    if (!showEventDialog(targetEvent, true))
+        return;
+
+    if (!database.updateEvent(targetEvent, error)) {
+        QMessageBox::warning(this, QStringLiteral("Помилка"), error);
+        return;
+    }
+
+    refreshEvents();
+}
+
+// ============================================================================
+// ВІДКРИТТЯ СХЕМИ ЗАЛИ ТА МАЛЮВАННЯ МІСЦЬ
+// ============================================================================
 void MainWindow::openEventHall(int row, int)
 {
     auto *idItem = ui->events->item(row, 0);
@@ -187,9 +424,6 @@ void MainWindow::onTabChanged(int index)
     }
 }
 
-// ============================================================================
-// МАЛЮВАННЯ СХЕМИ ЗАЛИ: ПРОХІД ПО ЦЕНТРУ, ВІДСТУПИ, VIP-ДИВАНИ ТА ЦІНИ
-// ============================================================================
 void MainWindow::renderHallSeats(int eventId)
 {
     if (!seatsGrid)
@@ -201,7 +435,6 @@ void MainWindow::renderHallSeats(int eventId)
         delete item;
     }
 
-    // Дізнаємося тип події та її ціни (звичайну і VIP) з БД
     const QString eventKind = database.getEventKind(eventId);
     const bool isCinema = (eventKind == QStringLiteral("Кіно"));
     screenLabel->setText(isCinema ? QStringLiteral("ЕКРАН") : QStringLiteral("СЦЕНА"));
@@ -222,7 +455,6 @@ void MainWindow::renderHallSeats(int eventId)
         return;
     }
 
-    // Визначаємо максимальну довжину ряду та номер останнього (VIP) ряду
     int maxSeatsInRow = 0;
     int maxRow = 0;
     QMap<int, int> rowCounts;
@@ -235,12 +467,10 @@ void MainWindow::renderHallSeats(int eventId)
     }
     currentMaxRow = maxRow;
 
-    // Центральний прохід та відступ перед останнім рядом (VIP / Дивани)
     const int centerAisleCol = (maxSeatsInRow / 2) + 1;
     seatsGrid->setColumnMinimumWidth(centerAisleCol, 22);
     seatsGrid->setRowMinimumHeight(maxRow - 1, 44);
 
-    // Підписи рядів зліва та справа
     for (auto it = rowCounts.constBegin(); it != rowCounts.constEnd(); ++it) {
         const int rowNum = it.key();
         const bool isLastSofaRow = (rowNum == maxRow);
@@ -265,7 +495,6 @@ void MainWindow::renderHallSeats(int eventId)
         seatsGrid->addWidget(rightLbl, rowNum - 1, maxSeatsInRow + 2);
     }
 
-    // Розставляємо крісла по рядах
     for (const Seat &seat : seats) {
         const int countInThisRow = rowCounts[seat.rowNumber];
         const bool isLastSofaRow = (seat.rowNumber == maxRow);
@@ -310,10 +539,11 @@ void MainWindow::renderHallSeats(int eventId)
                 "QPushButton:hover { background: #e6b022; }"
                 ));
         } else {
-            btn->setToolTip(QStringLiteral("Ряд %1, Місце %2 — Продано")
-                                .arg(seat.rowNumber).arg(seat.seatNumber));
+            btn->setToolTip(QStringLiteral("Ряд %1, Місце %2 — ПРОДАНО\nКод квитка: %3")
+                                .arg(seat.rowNumber).arg(seat.seatNumber).arg(seat.ticketCode));
             btn->setStyleSheet(QStringLiteral(
                 "QPushButton { background: #c0392b; color: #ffffff; font-weight: bold; border-radius: 6px; border: 1px solid #e74c3c; }"
+                "QPushButton:hover { background: #d64535; }"
                 ));
         }
 
@@ -326,69 +556,142 @@ void MainWindow::renderHallSeats(int eventId)
 }
 
 // ============================================================================
-// БРОНЮВАННЯ З УРАХУВАННЯМ VIP-ЦІНИ ТА СКАСУВАННЯ БРОНІ
+// ЕТАП 5: ПРОДАЖ, БРОНЮВАННЯ, ВИКУП БРОНІ ТА ПЕРЕГЛЯД ЧЕКА
 // ============================================================================
 void MainWindow::onSeatClicked(const Seat &seat)
 {
     if (currentEventId == 0)
         return;
 
+    const bool isVip = (seat.rowNumber == currentMaxRow);
+    const int priceKop = isVip ? currentVipPriceKopiyky : currentRegularPriceKopiyky;
+    const QString priceStr = QString::number(priceKop / 100.0, 'f', 2);
+    const QString seatType = isVip ? QStringLiteral(" (VIP)") : QString();
+
+    // ------------------------------------------------------------------------
+    // 1. МІСЦЕ ВІЛЬНЕ -> Вибір: "Продати квиток" або "Забронювати"
+    // ------------------------------------------------------------------------
     if (seat.status == SeatStatus::Free) {
-        const bool isVip = (seat.rowNumber == currentMaxRow);
-        const int priceKop = isVip ? currentVipPriceKopiyky : currentRegularPriceKopiyky;
-        const QString priceStr = QString::number(priceKop / 100.0, 'f', 2);
-        const QString seatType = isVip ? QStringLiteral(" (VIP)") : QString();
+        QMessageBox msgBox(this);
+        msgBox.setWindowTitle(QStringLiteral("Оформлення квитка"));
+        msgBox.setText(QStringLiteral("Ряд %1%2, Місце %3\nВартість квитка: %4 грн\n\nОберіть дію:")
+                           .arg(seat.rowNumber).arg(seatType).arg(seat.seatNumber).arg(priceStr));
 
-        bool ok = false;
-        const QString name = QInputDialog::getText(
-                                 this,
-                                 QStringLiteral("Бронювання місця"),
-                                 QStringLiteral("Ряд %1%2, Місце %3 — Вартість: %4 грн.\nВведіть ім'я та прізвище клієнта:")
-                                     .arg(seat.rowNumber).arg(seatType).arg(seat.seatNumber).arg(priceStr),
-                                 QLineEdit::Normal,
-                                 QString(),
-                                 &ok
-                                 ).trimmed();
+        QPushButton *sellBtn = msgBox.addButton(QStringLiteral("Продати квиток"), QMessageBox::AcceptRole);
+        QPushButton *reserveBtn = msgBox.addButton(QStringLiteral("Забронювати"), QMessageBox::ActionRole);
+        msgBox.addButton(QStringLiteral("Скасувати"), QMessageBox::RejectRole);
 
-        if (!ok)
-            return;
+        msgBox.exec();
 
-        if (name.isEmpty()) {
-            QMessageBox::warning(this, QStringLiteral("Увага"), QStringLiteral("Ім'я клієнта не може бути порожнім."));
-            return;
+        if (msgBox.clickedButton() == sellBtn) {
+            QString ticketCode, error;
+            if (!database.sellDirectSeat(currentEventId, seat.id, priceKop, ticketCode, error)) {
+                QMessageBox::warning(this, QStringLiteral("Помилка продажу"), error);
+                return;
+            }
+
+            renderHallSeats(currentEventId);
+
+            QMessageBox::information(
+                this,
+                QStringLiteral("Квиток продано!"),
+                QStringLiteral("Оплата пройшла успішно.\n\n"
+                               "Місце: Ряд %1%2, Місце %3\n"
+                               "Сплачено: %4 грн\n"
+                               "Код квитка: %5")
+                    .arg(seat.rowNumber).arg(seatType).arg(seat.seatNumber).arg(priceStr, ticketCode)
+                );
+        } else if (msgBox.clickedButton() == reserveBtn) {
+            bool ok = false;
+            const QString name = QInputDialog::getText(
+                                     this,
+                                     QStringLiteral("Бронювання місця"),
+                                     QStringLiteral("Ряд %1%2, Місце %3 — Вартість: %4 грн.\nВведіть ім'я та прізвище клієнта:")
+                                         .arg(seat.rowNumber).arg(seatType).arg(seat.seatNumber).arg(priceStr),
+                                     QLineEdit::Normal,
+                                     QString(),
+                                     &ok
+                                     ).trimmed();
+
+            if (!ok)
+                return;
+
+            if (name.isEmpty()) {
+                QMessageBox::warning(this, QStringLiteral("Увага"), QStringLiteral("Ім'я клієнта не може бути порожнім."));
+                return;
+            }
+
+            QString error;
+            if (!database.reserveSeat(currentEventId, seat.id, name, error)) {
+                QMessageBox::warning(this, QStringLiteral("Помилка бронювання"), error);
+                return;
+            }
+
+            renderHallSeats(currentEventId);
+        }
+    }
+    // ------------------------------------------------------------------------
+    // 2. МІСЦЕ ЗАБРОНЬОВАНЕ -> Вибір: "Викупити (Продати)" або "Скасувати бронь"
+    // ------------------------------------------------------------------------
+    else if (seat.status == SeatStatus::Reserved) {
+        QMessageBox msgBox(this);
+        msgBox.setWindowTitle(QStringLiteral("Керування бронюванням"));
+        msgBox.setText(QStringLiteral("Ряд %1%2, Місце %3\nЗаброньовано на ім'я: «%4»\nДо сплати: %5 грн\n\nОберіть дію:")
+                           .arg(seat.rowNumber).arg(seatType).arg(seat.seatNumber)
+                           .arg(seat.reservationName, priceStr));
+
+        QPushButton *buyBtn = msgBox.addButton(QStringLiteral("Викупити (Продати)"), QMessageBox::AcceptRole);
+        QPushButton *cancelBtn = msgBox.addButton(QStringLiteral("Скасувати бронь"), QMessageBox::DestructiveRole);
+        msgBox.addButton(QStringLiteral("Закрити"), QMessageBox::RejectRole);
+
+        msgBox.exec();
+
+        if (msgBox.clickedButton() == buyBtn) {
+            QString ticketCode, error;
+            if (!database.sellReservedTicket(seat.ticketId, priceKop, ticketCode, error)) {
+                QMessageBox::warning(this, QStringLiteral("Помилка викупу"), error);
+                return;
+            }
+
+            renderHallSeats(currentEventId);
+
+            QMessageBox::information(
+                this,
+                QStringLiteral("Бронь викуплена!"),
+                QStringLiteral("Квиток успішно оформлено.\n\n"
+                               "Покупець: %1\n"
+                               "Місце: Ряд %2%3, Місце %4\n"
+                               "Сплачено: %5 грн\n"
+                               "Код квитка: %6")
+                    .arg(seat.reservationName).arg(seat.rowNumber).arg(seatType)
+                    .arg(seat.seatNumber).arg(priceStr, ticketCode)
+                );
+        } else if (msgBox.clickedButton() == cancelBtn) {
+            QString error;
+            if (!database.cancelReservation(seat.ticketId, error)) {
+                QMessageBox::warning(this, QStringLiteral("Помилка"), error);
+                return;
+            }
+
+            renderHallSeats(currentEventId);
+        }
+    }
+    // ------------------------------------------------------------------------
+    // 3. МІСЦЕ ПРОДАНЕ -> Показуємо чек та інформацію про квиток
+    // ------------------------------------------------------------------------
+    else {
+        const QString paidStr = QString::number(seat.paidKopiyky / 100.0, 'f', 2);
+        QString details = QStringLiteral("Ряд %1%2, Місце %3 — ПРОДАНО\n\n"
+                                         "Код квитка: %4\n"
+                                         "Сплачено: %5 грн\n"
+                                         "Час продажу: %6")
+                              .arg(seat.rowNumber).arg(seatType).arg(seat.seatNumber)
+                              .arg(seat.ticketCode, paidStr, seat.soldAt);
+
+        if (!seat.reservationName.isEmpty()) {
+            details += QStringLiteral("\nБронював: %1").arg(seat.reservationName);
         }
 
-        QString error;
-        if (!database.reserveSeat(currentEventId, seat.id, name, error)) {
-            QMessageBox::warning(this, QStringLiteral("Помилка бронювання"), error);
-            return;
-        }
-
-        renderHallSeats(currentEventId);
-    } else if (seat.status == SeatStatus::Reserved) {
-        const auto answer = QMessageBox::question(
-            this,
-            QStringLiteral("Скасування броні"),
-            QStringLiteral("Ряд %1, Місце %2 заброньовано на ім'я:\n«%3»\n\nСкасувати цю бронь?")
-                .arg(seat.rowNumber).arg(seat.seatNumber).arg(seat.reservationName),
-            QMessageBox::Yes | QMessageBox::No
-            );
-
-        if (answer != QMessageBox::Yes)
-            return;
-
-        QString error;
-        if (!database.cancelReservation(seat.ticketId, error)) {
-            QMessageBox::warning(this, QStringLiteral("Помилка"), error);
-            return;
-        }
-
-        renderHallSeats(currentEventId);
-    } else {
-        QMessageBox::information(
-            this,
-            QStringLiteral("Місце зайняте"),
-            QStringLiteral("Ряд %1, Місце %2 вже продане.").arg(seat.rowNumber).arg(seat.seatNumber)
-            );
+        QMessageBox::information(this, QStringLiteral("Інформація про квиток"), details);
     }
 }

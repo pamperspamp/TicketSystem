@@ -18,4 +18,7 @@ struct Seat
     SeatStatus status = SeatStatus::Free;
     int ticketId = 0;
     QString reservationName;
+    QString ticketCode;        // Унікальний код проданого квитка (наприклад, TKT-1-42-9F2A)
+    int paidKopiyky = 0;       // Сплачена сума в копійках
+    QString soldAt;            // Дата та час продажу
 };
