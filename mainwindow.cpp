@@ -1,59 +1,15 @@
 #include "mainwindow.h"
-#include "./ui_mainwindow.h"
+#include "ui_mainwindow.h"
 
+#include <QGridLayout>
+#include <QHBoxLayout>
 #include <QHeaderView>
-#include <QHoverEvent>
+#include <QLabel>
 #include <QMessageBox>
-
-namespace {
-class RowHighlight final : public QObject
-{
-public:
-    explicit RowHighlight(QTableWidget *view) : QObject(view), table(view)
-    {
-        table->viewport()->setAttribute(Qt::WA_Hover);
-        table->viewport()->installEventFilter(this);
-    }
-
-private:
-    bool eventFilter(QObject *, QEvent *event) override
-    {
-        if (event->type() == QEvent::Resize) {
-            auto *header = table->horizontalHeader();
-            int available = table->viewport()->width();
-            for (int i = 0; i < header->count(); ++i)
-                if (i != 1)
-                    available -= header->sectionSize(i);
-            const int minimum = table->fontMetrics().horizontalAdvance(QStringLiteral("Джазовий вечір")) + 28;
-            header->resizeSection(1, qMax(minimum, available));
-            return false;
-        }
-        int row = -1;
-        if (event->type() == QEvent::HoverMove || event->type() == QEvent::HoverEnter)
-            row = table->rowAt(static_cast<QHoverEvent *>(event)->position().toPoint().y());
-        else if (event->type() != QEvent::HoverLeave)
-            return false;
-        if (row != currentRow) {
-            setBackground(currentRow, {});
-            currentRow = row;
-            setBackground(row, QColor("#403747"));
-        }
-        return false;
-    }
-
-    void setBackground(int row, const QBrush &brush)
-    {
-        if (row < 0)
-            return;
-        for (int column = 0; column < table->columnCount(); ++column)
-            if (auto *item = table->item(row, column))
-                item->setBackground(brush);
-    }
-
-    QTableWidget *table;
-    int currentRow = -1;
-};
-}
+#include <QPushButton>
+#include <QTabWidget>
+#include <QTableWidgetItem>
+#include <QVBoxLayout>
 
 MainWindow::MainWindow(Database &db, QWidget *parent)
     : QMainWindow(parent)
@@ -61,36 +17,67 @@ MainWindow::MainWindow(Database &db, QWidget *parent)
     , database(db)
 {
     ui->setupUi(this);
-
-    auto *table = ui->events;
-    auto *header = table->horizontalHeader();
-    header->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    table->horizontalHeaderItem(5)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    header->setSectionResizeMode(QHeaderView::ResizeToContents);
-    header->setMinimumSectionSize(48);
-    header->setSectionResizeMode(1, QHeaderView::Fixed);
-    table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
-    table->setSelectionMode(QAbstractItemView::NoSelection);
-
-    for (int column : {0, 2, 3, 5}) {
-        const Qt::Alignment alignment = (column == 5 ? Qt::AlignRight : Qt::AlignHCenter) | Qt::AlignVCenter;
-        table->horizontalHeaderItem(column)->setTextAlignment(alignment);
-    }
-
-    table->setTextElideMode(Qt::ElideNone);
-    table->setWordWrap(true);
-    table->verticalHeader()->setMinimumSectionSize(52);
-    table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-
-    connect(header, &QHeaderView::sectionResized, table, [table](int column) {
-        if (column == 1)
-            table->resizeRowsToContents();
-    });
-
-    new RowHighlight(table);
-
-    // Завантажуємо реальні дані з БД при старті
+    setupTabs();
     refreshEvents();
+}
+
+MainWindow::~MainWindow()
+{
+    delete ui;
+}
+
+void MainWindow::setupTabs()
+{
+    // Забираємо вміст вікна з дизайнера — він стане першою вкладкою
+    QWidget *afishaPage = takeCentralWidget();
+
+    tabs = new QTabWidget(this);
+    tabs->setStyleSheet(QStringLiteral(
+        "QTabWidget::pane { border: 1px solid #353842; border-radius: 6px; }"
+        "QTabBar::tab { background: #23262e; color: #cfd3dc; padding: 8px 18px; margin-right: 4px; border-top-left-radius: 6px; border-top-right-radius: 6px; }"
+        "QTabBar::tab:selected { background: #353945; color: #ffffff; font-weight: bold; }"
+        ));
+
+    tabs->addTab(afishaPage, QStringLiteral("1. Афіша подій"));
+
+    // Створюємо другу вкладку — схема зали
+    auto *hallPage = new QWidget(this);
+    auto *hallLayout = new QVBoxLayout(hallPage);
+    hallLayout->setContentsMargins(20, 20, 20, 20);
+    hallLayout->setSpacing(14);
+
+    auto *topBar = new QHBoxLayout();
+    auto *backBtn = new QPushButton(QStringLiteral("← Назад до афіші"), hallPage);
+    backBtn->setCursor(Qt::PointingHandCursor);
+    backBtn->setStyleSheet(QStringLiteral("padding: 6px 14px; background: #2d313c; color: #ffffff; border-radius: 6px;"));
+
+    hallHeaderLabel = new QLabel(QStringLiteral("Оберіть подію в афіші (подвійний клік)"), hallPage);
+    hallHeaderLabel->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: bold; color: #f0c674;"));
+
+    topBar->addWidget(backBtn);
+    topBar->addSpacing(12);
+    topBar->addWidget(hallHeaderLabel);
+    topBar->addStretch();
+    hallLayout->addLayout(topBar);
+
+    auto *seatsWrapper = new QWidget(hallPage);
+    seatsGrid = new QGridLayout(seatsWrapper);
+    seatsGrid->setSpacing(10);
+    hallLayout->addWidget(seatsWrapper, 0, Qt::AlignCenter);
+    hallLayout->addStretch();
+
+    tabs->addTab(hallPage, QStringLiteral("2. Схема зали"));
+    setCentralWidget(tabs);
+
+    // Налаштування поведінки таблиці подій
+    ui->events->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    ui->events->setSelectionBehavior(QAbstractItemView::SelectRows);
+    ui->events->setSelectionMode(QAbstractItemView::SingleSelection);
+    ui->events->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+
+    connect(ui->events, &QTableWidget::cellDoubleClicked, this, &MainWindow::openEventHall);
+    connect(backBtn, &QPushButton::clicked, this, [this]() { tabs->setCurrentIndex(0); });
+    connect(tabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
 }
 
 void MainWindow::refreshEvents()
@@ -102,44 +89,101 @@ void MainWindow::refreshEvents()
         return;
     }
 
-    auto *table = ui->events;
-    table->setRowCount(0); // прибираємо приклади з mainwindow.ui
+    ui->events->setRowCount(0);
+    ui->events->setColumnCount(6);
+    ui->events->setHorizontalHeaderLabels({
+        QStringLiteral("Тип"),
+        QStringLiteral("Назва"),
+        QStringLiteral("Дата"),
+        QStringLiteral("Час"),
+        QStringLiteral("Зала"),
+        QStringLiteral("Ціна")
+    });
 
-    for (int row = 0; row < events.size(); ++row) {
-        const Event &ev = events[row];
-        table->insertRow(row);
+    for (int i = 0; i < events.size(); ++i) {
+        const Event &ev = events[i];
+        ui->events->insertRow(i);
 
-        // Вертикальний заголовок з типом події ("Вистава", "Концерт", "Кіно")
-        table->setVerticalHeaderItem(row, new QTableWidgetItem(ev.kind));
+        auto *kindItem = new QTableWidgetItem(ev.kind);
+        kindItem->setData(Qt::UserRole, ev.id); // Ховаємо ID події в першу комірку
 
-        const QString idText = QStringLiteral("%1").arg(ev.id, 2, 10, QLatin1Char('0'));
-        const QString dateText = ev.date;
-        const QString timeText = ev.time;
-        const QString priceText = (ev.priceKopiyky % 100 == 0)
-                                      ? QStringLiteral("%1 грн").arg(ev.priceKopiyky / 100)
-                                      : QStringLiteral("%1 грн").arg(ev.priceKopiyky / 100.0, 0, 'f', 2);
+        const QString priceText = QStringLiteral("%1 грн")
+                                      .arg(static_cast<double>(ev.priceKopiyky) / 100.0, 0, 'f', 2);
 
-        auto *idItem = new QTableWidgetItem(idText);
-        // Зберігаємо реальний ID в Qt::UserRole (як вимагає етап 2 плану)
-        idItem->setData(Qt::UserRole, ev.id);
-
-        table->setItem(row, 0, idItem);
-        table->setItem(row, 1, new QTableWidgetItem(ev.title));
-        table->setItem(row, 2, new QTableWidgetItem(dateText));
-        table->setItem(row, 3, new QTableWidgetItem(timeText));
-        table->setItem(row, 4, new QTableWidgetItem(ev.hallName));
-        table->setItem(row, 5, new QTableWidgetItem(priceText));
-
-        for (int column : {0, 2, 3, 5}) {
-            const Qt::Alignment alignment = (column == 5 ? Qt::AlignRight : Qt::AlignHCenter) | Qt::AlignVCenter;
-            table->item(row, column)->setTextAlignment(alignment);
-        }
+        ui->events->setItem(i, 0, kindItem);
+        ui->events->setItem(i, 1, new QTableWidgetItem(ev.title));
+        ui->events->setItem(i, 2, new QTableWidgetItem(ev.date));
+        ui->events->setItem(i, 3, new QTableWidgetItem(ev.time));
+        ui->events->setItem(i, 4, new QTableWidgetItem(ev.hallName));
+        ui->events->setItem(i, 5, new QTableWidgetItem(priceText));
     }
-
-    table->resizeRowsToContents();
 }
 
-MainWindow::~MainWindow()
+void MainWindow::openEventHall(int row, int)
 {
-    delete ui;
+    auto *idItem = ui->events->item(row, 0);
+    if (!idItem)
+        return;
+
+    currentEventId = idItem->data(Qt::UserRole).toInt();
+
+    const QString title = ui->events->item(row, 1)->text();
+    const QString date = ui->events->item(row, 2)->text();
+    const QString time = ui->events->item(row, 3)->text();
+    const QString hall = ui->events->item(row, 4)->text();
+
+    hallHeaderLabel->setText(
+        QStringLiteral("%1 — %2 о %3 (Зала: %4)").arg(title, date, time, hall));
+
+    renderHallSeats(currentEventId);
+    tabs->setCurrentIndex(1);
+}
+
+void MainWindow::onTabChanged(int index)
+{
+    if (index == 0) {
+        refreshEvents();
+    }
+}
+
+void MainWindow::renderHallSeats(int eventId)
+{
+    if (!seatsGrid)
+        return;
+
+    while (QLayoutItem *item = seatsGrid->takeAt(0)) {
+        if (QWidget *w = item->widget())
+            w->deleteLater();
+        delete item;
+    }
+
+    QString error;
+    const QVector<Seat> seats = database.loadSeatsForEvent(eventId, &error);
+    if (!error.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Помилка"), error);
+        return;
+    }
+
+    if (seats.isEmpty()) {
+        seatsGrid->addWidget(new QLabel(QStringLiteral("Місця для цієї зали не налаштовані")), 0, 0);
+        return;
+    }
+
+    for (const Seat &seat : seats) {
+        auto *btn = new QPushButton(
+            QStringLiteral("Р%1 М%2").arg(seat.rowNumber).arg(seat.seatNumber));
+        btn->setMinimumSize(78, 44);
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setProperty("seatId", seat.id);
+
+        if (seat.status == SeatStatus::Free) {
+            btn->setStyleSheet(QStringLiteral("background: #28382d; color: #b9f5c8; border: 1px solid #487354; border-radius: 6px;"));
+        } else if (seat.status == SeatStatus::Reserved) {
+            btn->setStyleSheet(QStringLiteral("background: #473c24; color: #ffe099; border: 1px solid #8a6d33; border-radius: 6px;"));
+        } else {
+            btn->setStyleSheet(QStringLiteral("background: #47262b; color: #ffb3bd; border: 1px solid #853d47; border-radius: 6px;"));
+        }
+
+        seatsGrid->addWidget(btn, seat.rowNumber - 1, seat.seatNumber - 1);
+    }
 }

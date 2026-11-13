@@ -13,7 +13,7 @@ int main(int argc, char *argv[])
         QMessageBox::critical(nullptr, QStringLiteral("Помилка бази даних"), error);
         return 1;
     }
-    MainWindow w;
+    MainWindow w(database);
     w.show();
     return QApplication::exec();
 }

@@ -1,13 +1,14 @@
-#ifndef MAINWINDOW_H
-#define MAINWINDOW_H
+#pragma once
 
 #include "database.h"
 #include <QMainWindow>
 
+class QGridLayout;
+class QLabel;
+class QTabWidget;
+
 QT_BEGIN_NAMESPACE
-namespace Ui {
-class MainWindow;
-}
+namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
 class MainWindow : public QMainWindow
@@ -16,13 +17,22 @@ class MainWindow : public QMainWindow
 
 public:
     explicit MainWindow(Database &db, QWidget *parent = nullptr);
-    ~MainWindow() override;
+    ~MainWindow();
 
-public slots:
-    void refreshEvents();
+private slots:
+    void openEventHall(int row, int column);
+    void onTabChanged(int index);
 
 private:
+    void setupTabs();
+    void refreshEvents();
+    void renderHallSeats(int eventId);
+
     Ui::MainWindow *ui;
     Database &database;
+
+    QTabWidget *tabs = nullptr;
+    QLabel *hallHeaderLabel = nullptr;
+    QGridLayout *seatsGrid = nullptr;
+    int currentEventId = 0;
 };
-#endif // MAINWINDOW_H
